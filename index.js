@@ -5,6 +5,10 @@ const fs = require('fs')
 const simpleParser = require('mailparser').simpleParser
 const _ = require('lodash')
 const iconv = require('iconv-lite')
+const { getFiles, authorize, downloadAttachment } = require('./server-gapi')
+const mime = require('mime-types')
+const path = require('path')
+
 
 const hostname = '127.0.0.1'
 const port = 4321
@@ -12,29 +16,21 @@ const app = express()
 
 app.use(cors())
 
-const emailConnect = (user, pass) => {
-  const config = {
-    imap: {
-      user: user,
-      password: pass,
-      host: 'imap.gmail.com',
-      port: 993,
-      tls: true,
-      authTimeout: 3000
-    }
+
+const findUrls = text => {
+  const pattern = /https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|www\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9]+\.[^\s]{2,}|www\.[a-zA-Z0-9]+\.[^\s]{2,}/
+  return pattern.exec(text)
+}
+
+
+const sendFilesList = res => {
+  return auth => {
+    getFiles(auth).then(files => {
+      console.log(files)
+      res.send(Object.values(files))
+    })
   }
-  return imaps.connect(config)
 }
-
-const getHtmlBody = email => {
-  _.find(imaps.getParts(email), {partID: '1.1.1'})
-  return '<h1>adsf</h1>'
-}
-
-const bufferToWindows1255 = buff => {
-  const iconv = buff.toString('utf8')
-}
-
 
 app.get('/', (req, res) => {
   res.statusCode = 200
@@ -44,58 +40,27 @@ app.get('/', (req, res) => {
 })
 
 app.post('/search', (req, res) => {
+
+  fs.readFile('credentials.json', (err, content) => {
+    const helper = sendFilesList(res)
+    authorize(JSON.parse(content), helper)
+  })
+})
+
+app.post('/download', (req, res) => {
   req.on('data', data => {
-    const creds = JSON.parse(data)
-    emailConnect(creds.username, creds.password)
-    .then(conn => {
-      conn.openBox('INBOX')
-      .then(() => {
-        const searchCriteria = [
-          'FLAGGED'
-        ]
-        const fetchOptions = {
-          bodies: [ 'HEADER', '1'],
-          markSeen: false,
-          struct: true
-        }
-        conn.search(searchCriteria, fetchOptions)
-        .then(results => {
-          return Promise.all(results.map(email => {
-            const bodyPart = imaps.getParts(email.attributes.struct)[0]
-            const params = bodyPart.params
-            return conn.getPartData(email, bodyPart)
-            .then(msgBody => {
-              if (params.charset) {
-                const buf = new Buffer.from(msgBody)
-                msgBody = iconv.decode(buf, params.charset)
-              }
-              console.log(msgBody)
-              const headerBody = _.find(email.parts, {'which': 'HEADER'}).body
-              const sender = headerBody.from[0]
-              const subject = headerBody.subject[0]
-              return {[sender]:  {subject: subject, body: msgBody}}
-            })
-          }))
-          .then(list => {
-            return list.reduce((emailsStruct, email) => {
-              const key = Object.keys(email).pop()
-              if (emailsStruct[key]) {
-                emailsStruct[key].push(email[key])
-              } else {
-                emailsStruct[key] = [email[key]]
-              }
-              return emailsStruct
-            }, {})
-          })
-          .then(orderedEmails => {
-            res.send(orderedEmails)
-            fs.writeFile('./mock.json', JSON.stringify(orderedEmails), 'utf8')
-          }) 
+    JSON.parse(data).map(file => {
+      const today = (new Date).toISOString().replace(/T.*/, '').replace(/-/g, '.')
+      const SAVE_PATH = `/home/rapat/Downloads/${today}`
+      const fullPath = path.join(SAVE_PATH, file.path)
+      fs.readFile('credentials.json', (err, content) => {
+        authorize(JSON.parse(content), auth => {
+          downloadAttachment(auth, fullPath, file.messageId, file.partId)
         })
       })
     })
-    .catch(error => res.send(error))
   })
+  res.send({})
 })
 
 app.post('/mock', (req, res) => {
