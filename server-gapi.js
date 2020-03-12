@@ -1,4 +1,5 @@
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const readline = require('readline');
 const { google } = require('googleapis');
 const _ = require('lodash')
@@ -12,7 +13,8 @@ Array.prototype.flatMap = function(lambda) {
 
 // If modifying these scopes, delete token.json.
 const SCOPES = [
-  'https://mail.google.com'
+  'https://mail.google.com',
+  'https://www.googleapis.com/auth/drive'
 ];
 
 // The file token.json stores the user's access and refresh tokens, and is
@@ -37,14 +39,22 @@ const TOKEN_PATH = 'token.json';
 function authorize(credentials, callback) {
   const {client_secret, client_id, redirect_uris} = credentials.installed;
   const oAuth2Client = new google.auth.OAuth2(
-    client_id, client_secret, redirect_uris[0]);
+    client_id, client_secret, redirect_uris[0])
 
   // Check if we have previously stored a token.
-  fs.readFile(TOKEN_PATH, (err, token) => {
-    if (err) return getAccessToken(oAuth2Client, callback);
-    oAuth2Client.setCredentials(JSON.parse(token));
+  return fsPromises.readFile(TOKEN_PATH)
+  .then(token => {
+    oAuth2Client.setCredentials(JSON.parse(token))
     callback(oAuth2Client)
-  });
+  })
+}
+
+const authorizePromise = credentials => {
+  return new Promise((resolve, reject) => {
+    authorize(credentials, auth => {
+      return resolve(auth)
+    })
+  })
 }
 
 /**
@@ -83,6 +93,7 @@ const parseSender = str => str.replace(/( <).*/, '').replace(/['"]/g, '')
 const safeJoin = nodes => path.join(...nodes.map(node => node.replace(/[/\\?%*:|"<>]/g, '-').trim()))
 
 
+
 /**
  * Lists the names and IDs of up to 10 files.
  * @param { google.auth.OAuth2 } auth An authorized OAuth2 client.
@@ -111,28 +122,30 @@ function getFiles(auth) {
         console.log(files)
         return (
           {
-            sender: sender, 
-            subject: subject, 
-            files: files, 
-            body: bodyData, 
+            sender: sender,
+            subject: subject,
+            files: files,
+            body: bodyData,
             id: res.data.id,
             messageId: res.data.id
           }
         )
       })
     }))
+    .then(data => data.filter(fileData => fileData.files.length))
     .then(data => {
       return data.reduce((obj, cur, index) => {
         obj[cur.sender] = obj[cur.sender] || {}
         obj[cur.sender].value = cur.id
         obj[cur.sender].label = parseSender(cur.sender)
         const newChild = {
-          label: cur.subject, 
-          value: cur.subject + index, 
+          label: cur.subject,
+          value: cur.subject + index,
           children: cur.files.map((file, i) => ({
             label: file.filename,
             value: JSON.stringify({
               partId: file.id,
+              driveId: file.url && /\/d\/(.*)\//.exec(file.url)[1],
               messageId: cur.id,
               userId: cur.sender,
               path: safeJoin([parseSender(cur.sender), cur.subject, file.filename])
@@ -152,7 +165,19 @@ function getFiles(auth) {
 
 const findDriveShares = html => {
   const root = parse(html)
-  return root.querySelectorAll('a').map((elem) => ({ 
+  return root.querySelectorAll('a')
+  .filter(elem => elem.rawAttributes.href.includes('drive.google.com'))
+  .map(elem => ({ 
+    filename: elem.structuredText, url: elem.rawAttributes.href 
+  }))
+}
+
+const findAndFilterUrls = html => {
+  const root = parse(html)
+  const allowedFiles = ['.png', '.jpg', '.jpeg', '.zip', '.rar', '.stp']
+  return root.querySelectorAll('a')
+  .filter(elem => allowedFiles.some(extension => elem.rawAttributes.href.endsWith(extension) && !elem.rawAttributes.href.includes('drive.google.com')))
+  .map(elem => ({ 
     filename: elem.structuredText, url: elem.rawAttributes.href 
   }))
 }
@@ -166,64 +191,43 @@ function searchBodyRec(payload, mimeType) {
     return payload.body.data;
   } else if (payload.parts && payload.parts.length) {
     return payload.parts.flatMap(function(part){
-      return searchBodyRec(part, mimeType);
+      return searchBodyRec(part, mimeType)
     }).filter(function(body) {
-      return body;
-    });
+      return body
+    })
   }
 }
+
 
 const downloadAttachment = (auth, filePath, messageId, partId) => {
   const gmail = google.gmail({version: 'v1', auth})
-  gmail.users.messages.attachments.get({
+  return gmail.users.messages.attachments.get({
     'id': partId,
     'messageId': messageId,
     'userId': 'me'
-  }, (error, { data }) => {
+  })
+  .then(res => {
     const dirname = path.dirname(filePath)
-    
-    fs.mkdir(dirname, { recursive: true }, error => {
-      if (error) console.log(error)
-      fs.writeFile(filePath, data.data, 'base64', err => {
-        console.log(data)
-      })
+    return fsPromises.mkdir(dirname, { recursive: true })
+    .then(() => {
+      return fsPromises.writeFile(filePath, res.data.data, 'base64')
+      .then(() => console.log(res.data))
+      .catch(error => console.log(error))
     })
   })
+  .catch(error => console.log(error))
 }
 
-function getAttachments(messageId, callback) {
-  const gmail = google.gmail({version: 'v1', auth})
-  var parts = message.payload.parts;
-  for (var i = 0; i < parts.length; i++) {
-    var part = parts[i];
-    if (part.filename && part.filename.length > 0) {
-      var attachId = part.body.attachmentId;
-      var request = gmail.users.messages.attachments.get({
-        'id': attachId,
-        'messageId': messageId,
-        'userId': 'me'
-      });
-      request.execute(function(attachment) {
-        callback(part.filename, part.mimeType, attachment);
-      });
-    }
-  }
+const findUrls = text => {
+  const pattern = /https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|www\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9]+\.[^\s]{2,}|www\.[a-zA-Z0-9]+\.[^\s]{2,}/
+  return pattern.exec(text)
 }
 
-// const downloadFiles = filesStruct => {
-//   const gmail = google.gmail({version: 'v1', auth})
-//   Object.entries(filesStruct).map((sender, subjects) => {
-//     fs.mkdirSync(`/home/rapat/Downloads/${sender}`)
-//     Object.entries(subjects).map((subject, files) => {
-//       fs.mkdirSync(`/home/rapat/Downloads/${sender}/${subject}`)
-//       gmail.users.messages.attachments.get()
-
-//     })
-//   })
-// }
 
 module.exports = {
   getFiles: getFiles,
   authorize: authorize,
-  downloadAttachment: downloadAttachment
+  downloadAttachment: downloadAttachment,
+  getAccessToken: getAccessToken,
+  authorizePromise: authorizePromise
 }

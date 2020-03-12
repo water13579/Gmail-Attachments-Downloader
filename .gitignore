@@ -1,1 +1,4 @@
 ./node_modules
+./credentials.json
+./token.json
+
