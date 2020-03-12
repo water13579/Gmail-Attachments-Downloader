@@ -1,0 +1,33 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.19.0",
+    "content-security-policy": "^0.3.3",
+    "cors": "^2.8.5",
+    "emailjs-imap-client": "^3.0.7",
+    "express": "^4.17.1",
+    "express-csp-header": "^2.3.2",
+    "express-session": "^1.17.0",
+    "googleapis": "^47.0.0",
+    "iconv": "^2.3.5",
+    "iconv-lite": "^0.5.1",
+    "imap": "^0.8.19",
+    "imap-simple": "^4.3.0",
+    "jsdom": "^16.0.1",
+    "mailparser": "^2.7.7",
+    "mime-types": "^2.1.26",
+    "mkdirp": "^1.0.3",
+    "node-html-parser": "^1.1.19",
+    "querystring": "^0.2.0",
+    "react-router-dom": "^5.1.2",
+    "windows-1255": "^1.0.0"
+  }
+}
