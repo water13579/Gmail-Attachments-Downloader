@@ -14,7 +14,7 @@
     "cors": "^2.8.5",
     "emailjs-imap-client": "^3.0.7",
     "express": "^4.17.1",
-    "express-csp-header": "^2.3.2",
+    "express-csp-header": "^5.1.0",
     "express-session": "^1.17.0",
     "googleapis": "^47.0.0",
     "iconv": "^2.3.5",
